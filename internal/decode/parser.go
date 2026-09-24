@@ -14,6 +14,7 @@ type ParsedPacket struct{
 	DstPort uint16
 	Protocol string
 	Length int
+	RawPacket gopacket.Packet
 }
 
 type Parser struct{ 
@@ -63,5 +64,13 @@ func(p *Parser) Parse(packet gopacket.Packet) (*ParsedPacket, bool) {
 		DstPort: dstPort,
 		Protocol: protocol,
 		Length: len(packet.Data()),
+		RawPacket: packet,
 	}, true
+}
+
+func (p *Parser) equals(pack1 ParsedPacket, pack2 ParsedPacket) bool { 
+	if pack1.DstIP.Equal(pack2.DstIP)&& pack1.DstPort == pack2.DstPort && pack1.SrcPort == pack2.SrcPort && pack1.SrcIP.Equal(pack2.SrcIP) && pack1.Protocol == pack2.Protocol {
+		return true
+	}
+	return false 
 }
