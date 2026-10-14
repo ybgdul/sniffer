@@ -16,6 +16,10 @@ type HttpRequest struct {
 	Host     string
 	Protocol string
 	IP       string
+
+	Header 	 http.Header
+	Body 	 string 
+	Type     string
 }
 
 type httpStream struct {
@@ -26,12 +30,10 @@ type httpStream struct {
 	out     chan<- *HttpRequest
 }
 
-// Accept implements [reassembly.Stream].
 func (s *httpStream) Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir reassembly.TCPFlowDirection, nextSeq reassembly.Sequence, start *bool, ac reassembly.AssemblerContext) bool {
 	return true
 }
 
-// ReassembledSG implements [reassembly.Stream].
 func (s *httpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.AssemblerContext) {
 	length, _ := sg.Lengths()
 	if length == 0 { 
@@ -45,7 +47,6 @@ func (s *httpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.As
 	}
 }
 
-// ReassemblyComplete implements [reassembly.Stream].
 func (s *httpStream) ReassemblyComplete(ac reassembly.AssemblerContext) bool {
 	s.w.Close()
 	return true
@@ -78,12 +79,24 @@ func (s *httpStream) parse() {
 			continue
 		}
 
+		var bodyStr string
+		if req.Body != nil { 
+			bytes, err := io.ReadAll(io.LimitReader(req.Body, 64*1024)) 
+			if err == nil && len(bytes) > 0{ 
+				bodyStr = string(bytes)
+			}
+			req.Body.Close()
+		}
+
 		s.out <- &HttpRequest{
 			Method:   req.Method,
 			URL:      req.URL.String(),
 			Host:     req.Host,
 			Protocol: req.Proto,
 			IP:       s.netFlow.Src().String(),
+			Header:   req.Header,
+			Body:     bodyStr,
+			Type: 	  req.Header.Get("Content-Type"),
 		}
 		req.Body.Close()
 	}

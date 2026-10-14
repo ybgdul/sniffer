@@ -1,11 +1,14 @@
 package design
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sniffer/internal/reassemble"
+	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/table"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -150,6 +153,19 @@ func (m Model) View() string {
 	return fmt.Sprintf("\n %s\n\n%s\n%s", header, m.table.View(), help)
 }
 
+func (m Model) parseJson(raw string) string { 
+	if strings.TrimSpace(raw) == ""{
+		return "(No Body Payload)"
+	}
+
+	var formattedJson bytes.Buffer
+	err := json.Indent(&formattedJson, []byte(raw), "", " ")
+	if err != nil {
+		return raw
+	}
+	return formattedJson.String()
+}
+
 func (m Model) renderDetailView() string {
 	req := m.selected
 
@@ -160,17 +176,28 @@ func (m Model) renderDetailView() string {
 		methodStyled = methodPostStyle.Render(req.Method)
 	}
 
+	var headerList []string
+	for k, v := range req.Header {
+		headerList = append(headerList, fmt.Sprintf("   %s: %s", k, strings.Join(v, ", ")))
+	}
+
 	content := fmt.Sprintf(
 		"METHOD:    %s\n"+
 			"HOST:      %s\n"+
 			"URL:       %s\n"+
 			"CLIENT IP: %s\n"+
-			"PROTOCOL:  %s\n",
+			"PROTOCOL:  %s\n"+
+			"TYPE: %s\n" +
+			"--HEADERS------------------\n%s\n\n" + 
+			"--PAYLOAD------------------\n%s\n",
 		methodStyled,
 		req.Host,
 		req.URL,
 		req.IP,
 		req.Protocol,
+		req.Type,
+		strings.Join(headerList, "\n"),
+		m.parseJson(req.Body),
 	)
 
 	box := detailBoxStyle.Render(content)
