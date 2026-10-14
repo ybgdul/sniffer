@@ -2,7 +2,7 @@
 
 A lightweight, low-level CLI tool and live terminal dashboard written in Go that intercepts, decodes, and reassembles network traffic in real time.
 
-Instead of relying on API proxies, it hooks directly into your system's network driver layer (`libpcap` / `BPF`), reassembles TCP streams in memory, extracts full HTTP requests (including headers and JSON bodies), and presents an interactive TUI.
+Instead of relying on API proxies, it hooks directly into your system's network driver layer (libpcap / BPF), reassembles TCP streams in memory, and reconstructs complete HTTP transactions - pairing every client request with its corresponding server response, headers and JSON bodies included - then presents them in an interactive TUI.
 
 ## Technologies
 

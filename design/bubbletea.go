@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sniffer/internal/reassemble"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,29 +20,30 @@ const (
     modeDetail
 )
 
-type MessageReq struct{ 
-    Req *reassemble.HttpRequest
+type MessageTranscation struct{ 
+    Tx *reassemble.HttpTranscation
 }
 
 type Model struct{ 
     table table.Model
-    requests []*reassemble.HttpRequest
-    selected *reassemble.HttpRequest
+    transcations []*reassemble.HttpTranscation
+    selected *reassemble.HttpTranscation
     mode viewMode
     width int 
     height int 
-    incoming <-chan *reassemble.HttpRequest
+    incoming <-chan *reassemble.HttpTranscation
 }
 
-func NewModel(incoming <-chan *reassemble.HttpRequest) Model { 
+func NewModel(incoming <-chan *reassemble.HttpTranscation) Model { 
     t := table.New(
             table.WithColumns(
                 []table.Column{
-                    {Title: "METHOD", Width: 8},
-                    {Title: "HOST", Width: 20},
-                    {Title: "URL", Width: 35},
-                    {Title: "CLIENT IP", Width: 35},
-                    {Title: "PROTOCOL", Width: 8},
+					{Title: "STATUS", Width: 8},
+					{Title: "METHOD", Width: 8},
+					{Title: "HOST", Width: 20},
+					{Title: "URL", Width: 25},
+					{Title: "LATENCY", Width: 10},
+					{Title: "CLIENT IP", Width: 15},
                 },
             ),
             table.WithFocused(true),
@@ -65,13 +67,13 @@ func NewModel(incoming <-chan *reassemble.HttpRequest) Model {
 	}
 }
 
-func waitForNextRequest(s <-chan *reassemble.HttpRequest) tea.Cmd{ 
+func waitForNextRequest(s <-chan *reassemble.HttpTranscation) tea.Cmd{ 
     return func() tea.Msg {
-        req, ok := <-s
+        transcation, ok := <-s
         if !ok { 
             return nil 
         }
-        return MessageReq{Req:req}
+        return MessageTranscation{Tx:transcation}
     }
 }
 
@@ -93,10 +95,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "enter":
-			if m.mode == modeTable && len(m.requests) > 0 {
+			if m.mode == modeTable && len(m.transcations) > 0 {
 				idx := m.table.Cursor()
-				if idx >= 0 && idx < len(m.requests) {
-					m.selected = m.requests[idx]
+				if idx >= 0 && idx < len(m.transcations) {
+					m.selected = m.transcations[idx]
 					m.mode = modeDetail
 				}
 			}
@@ -113,24 +115,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table.SetWidth(msg.Width - 4)
 		m.table.SetHeight(msg.Height - 6)
 
-	case MessageReq:
-		// Append new request to state
-		m.requests = append(m.requests, msg.Req)
+	case MessageTranscation:
+		m.transcations = append(m.transcations, msg.Tx)
 
-		// Create table row
+		var statusStr string
+		if msg.Tx.StatusCode > 0 {
+			switch {
+			case msg.Tx.StatusCode >= 200 && msg.Tx.StatusCode < 300:
+				statusStr = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render(fmt.Sprintf("%d OK", msg.Tx.StatusCode))
+			case msg.Tx.StatusCode >= 400 && msg.Tx.StatusCode < 500:
+				statusStr = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render(fmt.Sprintf("%d ERR", msg.Tx.StatusCode))
+			case msg.Tx.StatusCode >= 500:
+				statusStr = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(fmt.Sprintf("%d FAIL", msg.Tx.StatusCode))
+			default:
+				statusStr = fmt.Sprintf("%d", msg.Tx.StatusCode)
+			}
+		} else { 
+			statusStr = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("PENDING")
+		}
+
 		row := table.Row{
-			msg.Req.Method,
-			msg.Req.Host,
-			msg.Req.URL,
-			msg.Req.IP,
-			msg.Req.Protocol,
+			statusStr,
+			msg.Tx.Method,
+			msg.Tx.Host,
+			msg.Tx.URL,
+			msg.Tx.Duration.Round(time.Millisecond).String(),
+			msg.Tx.ClientIP,
 		}
 
 		rows := m.table.Rows()
 		rows = append(rows, row)
 		m.table.SetRows(rows)
 
-		// Continue listening on channel
 		return m, waitForNextRequest(m.incoming)
 	}
 
@@ -146,8 +162,13 @@ func (m Model) View() string {
 		return m.renderDetailView()
 	}
 
-	// Render Main Table View
-	header := titleStyle.Render("LIVE NETWORK TRAFFIC SNIFFER")
+	header := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FAFAFA")).
+		Background(lipgloss.Color("#7D56F4")).
+		Padding(0, 1).
+		Render("LIVE HTTP TRANSACTION SNIFFER")
+
 	help := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("\n  ↑/↓: Navigate • Enter: Inspect • q: Quit")
 
 	return fmt.Sprintf("\n %s\n\n%s\n%s", header, m.table.View(), help)
@@ -165,44 +186,53 @@ func (m Model) parseJson(raw string) string {
 	}
 	return formattedJson.String()
 }
-
 func (m Model) renderDetailView() string {
-	req := m.selected
+	tx := m.selected
 
-	var methodStyled string
-	if req.Method == "GET" {
-		methodStyled = methodGetStyle.Render(req.Method)
-	} else {
-		methodStyled = methodPostStyle.Render(req.Method)
+	var reqHeaders []string
+	for k, v := range tx.ReqHeader {
+		reqHeaders = append(reqHeaders, fmt.Sprintf("  %s: %s", k, strings.Join(v, ", ")))
 	}
 
-	var headerList []string
-	for k, v := range req.Header {
-		headerList = append(headerList, fmt.Sprintf("   %s: %s", k, strings.Join(v, ", ")))
+	var respHeaders []string
+	for k, v := range tx.RespHeader {
+		respHeaders = append(respHeaders, fmt.Sprintf("  %s: %s", k, strings.Join(v, ", ")))
 	}
 
 	content := fmt.Sprintf(
-		"METHOD:    %s\n"+
-			"HOST:      %s\n"+
-			"URL:       %s\n"+
-			"CLIENT IP: %s\n"+
-			"PROTOCOL:  %s\n"+
-			"TYPE: %s\n" +
-			"--HEADERS------------------\n%s\n\n" + 
-			"--PAYLOAD------------------\n%s\n",
-		methodStyled,
-		req.Host,
-		req.URL,
-		req.IP,
-		req.Protocol,
-		req.Type,
-		strings.Join(headerList, "\n"),
-		m.parseJson(req.Body),
+		"METHOD:      %s\n"+
+			"URL:         %s\n"+
+			"STATUS:      %d %s\n"+
+			"LATENCY:     %s\n"+
+			"CLIENT IP:   %s\n\n"+
+			"── REQUEST HEADERS ──────────────────────────\n%s\n\n"+
+			"── REQUEST BODY ─────────────────────────────\n%s\n\n"+
+			"── RESPONSE HEADERS ─────────────────────────\n%s\n\n"+
+			"── RESPONSE BODY ────────────────────────────\n%s\n",
+		tx.Method,
+		tx.URL,
+		tx.StatusCode, tx.StatusText,
+		tx.Duration.Round(time.Millisecond).String(),
+		tx.ClientIP,
+		strings.Join(reqHeaders, "\n"),
+		tx.ReqBody,
+		strings.Join(respHeaders, "\n"),
+		tx.RespBody,
 	)
 
-	box := detailBoxStyle.Render(content)
-	header := titleStyle.Render("REQUEST INSPECTOR")
+	detailBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(1, 2)
+
+	header := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FAFAFA")).
+		Background(lipgloss.Color("#7D56F4")).
+		Padding(0, 1).
+		Render("TRANSACTION INSPECTOR")
+
 	help := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("\n  Esc / q: Back to list")
 
-	return fmt.Sprintf("\n %s\n\n%s\n%s", header, box, help)
+	return fmt.Sprintf("\n %s\n\n%s\n%s", header, detailBoxStyle.Render(content), help)
 }

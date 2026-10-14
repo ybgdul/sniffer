@@ -14,7 +14,7 @@ type Engine struct{
 	assembler *reassembly.Assembler
 }
 
-func NewEngine(out chan<- *HttpRequest) *Engine {
+func NewEngine(out chan<- *HttpTranscation) *Engine {
 	factory := &httpStreamFactory{out: out}
 	streamPool := reassembly.NewStreamPool(factory)
 	assembler := reassembly.NewAssembler(streamPool)

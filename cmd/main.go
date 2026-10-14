@@ -34,11 +34,11 @@ func main() {
 	decoder := decode.NewEngine(4)
 	parsedChan := decoder.Decode(ctx, rawPacket)
 
-	httpRequests := make(chan *reassemble.HttpRequest, 500)
-	assembler := reassemble.NewEngine(httpRequests)
+	httpTranscations := make(chan *reassemble.HttpTranscation, 500)
+	assembler := reassemble.NewEngine(httpTranscations)
 	go assembler.Run(ctx, parsedChan)
 
-	p := tea.NewProgram(design.NewModel(httpRequests), tea.WithAltScreen())
+	p := tea.NewProgram(design.NewModel(httpTranscations), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("Bubbletea has failed: %v", err)
 	}
